@@ -1,0 +1,8 @@
+{
+  "base_url": "https://gitlab.example.com",
+  "token_file": "/run/secrets/gitlab_token",
+  "projects": [
+    { "id": 123, "path": "example-group/example-project" }
+  ],
+  "branch_prefix": "agent/"
+}
