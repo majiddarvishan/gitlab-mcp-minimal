@@ -33,19 +33,29 @@ ChatGPT -> OpenAI-hosted tunnel endpoint <- outbound HTTPS <- tunnel-client (ins
 - Conversation with the maintainer happens in Persian. Code, comments, commit messages, docs, issues and PRs are
   written in English.
 - Go, standard library first. Every third-party dependency needs a written justification in its PR. Pin versions.
-- Module path: `github.com/majiddarvishan/gitlab-mcp-minimal`.
+- Module path: `github.com/majiddarvishan/gitlab-mcp-minimal`. Go version: see `go.mod`.
+- Package layout: `internal/secret` (redacting string type), `internal/validate` (validators, allow-list),
+  `internal/config`, `internal/audit`, `internal/gitlab` (REST client). `cmd/` is added in T2.1.
 
 ## Working rules
 
 1. Never push to `main`. Work on `claude/<topic>` branches and open a PR for the maintainer to review and merge.
-2. One task (or sub-task) per PR, small diffs. Put the task ID (for example `T1.2`) in the PR title and update the
-   task's status in `TASKS.md`.
-3. The assistant's sandbox cannot download Go modules, so it usually cannot compile code or run tests. CI is the
-   source of truth. Keep code simple, check external APIs against primary documentation before using them, and list
-   what is unverified in the PR description.
-4. Tests first for validators and policy checks (table-driven and fuzz). Every security-relevant rule needs a
-   negative test.
-5. No secrets, ever. Never log tokens, request headers or file contents.
-6. Mark unverified facts (library APIs, GitLab endpoints and versions, tunnel-client flags) with `VERIFY` until they
+   (Only exception: the one-time bootstrap commit of an empty repository.)
+2. One task (or sub-task) per commit, with the task ID in the commit message (for example `feat: T1.2 ...`). A PR may
+   group the tasks of a phase, because creating a PR needs a manual click in the chat interface.
+3. Mark a task `[x]` in `TASKS.md` only when its acceptance criteria are met and verified (tests run locally or in CI).
+   Update the status in the same PR that changes it.
+4. Sandbox facts. The assistant's sandbox can install a Go toolchain from the Ubuntu archive
+   (`apt-get install golang-1.26-go`, then `/usr/lib/go-1.26/bin/go`) and run standard-library-only code, so tests
+   and `go vet` can run there. It cannot download Go modules (the module proxy is not reachable), so code with
+   third-party dependencies, such as the MCP SDK, usually cannot be compiled there and CI is the source of truth.
+   `govulncheck` also cannot run there. List what is unverified in the PR description.
+5. The GitHub connector used by the assistant has no `workflows` permission, so it cannot create or change files
+   under `.github/workflows/`. The maintainer commits workflow files.
+6. Tests first for validators and policy checks (table-driven and fuzz). Every security-relevant rule needs a
+   negative test. For security-critical code, run mutation checks (break the rule on purpose and confirm a test
+   fails).
+7. No secrets, ever. Never log tokens, request headers or file contents.
+8. Mark unverified facts (library APIs, GitLab endpoints and versions, tunnel-client flags) with `VERIFY` until they
    are checked against the primary source.
-7. No scope creep. A new tool or capability needs an entry in `DECISIONS.md` first.
+9. No scope creep. A new tool or capability needs an entry in `DECISIONS.md` first.
