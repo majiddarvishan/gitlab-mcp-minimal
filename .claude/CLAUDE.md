@@ -1,0 +1,61 @@
+# CLAUDE.md: gitlab-mcp-minimal
+
+Project context and working rules for AI-assisted sessions on this repository.
+Read this file, `DECISIONS.md` and `TASKS.md` before starting any work.
+
+## Goal
+
+A minimal [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server in Go that lets an AI assistant
+(ChatGPT desktop/web through a Developer-mode custom connector) **read repositories and propose changes on a
+private, self-hosted GitLab instance through branches and merge requests, and nothing else.**
+
+Deliberate non-goals: general GitLab API coverage, GraphQL or raw-API passthrough, file upload, any local
+filesystem access, HTTP/SSE transports, merging MRs, writing to default or protected branches.
+
+## Deployment shape
+
+```
+ChatGPT -> OpenAI-hosted tunnel endpoint <- outbound HTTPS <- tunnel-client (inside the private network)
+                                                              |
+                                          this server (stdio child process) -> GitLab REST API
+```
+
+- One container, two binaries. `tunnel-client` (OpenAI, open source, `github.com/openai/tunnel-client`) starts this
+  server as a child process over stdio. Exact flags and profile format: VERIFY against OpenAI's "Secure MCP Tunnel"
+  guide.
+- stdout is the MCP protocol channel. **Never write logs to stdout.** Logs go to stderr.
+- The GitLab instance is private. Its hostname, project IDs/paths, tokens and any organisation-specific names must
+  never appear in this repository (code, tests, docs, examples, commit messages). Use `gitlab.example.com` and fake
+  IDs.
+
+## Conventions
+
+- Conversation with the maintainer happens in Persian. Code, comments, commit messages, docs, issues and PRs are
+  written in English.
+- Go, standard library first. Every third-party dependency needs a written justification in its PR. Pin versions.
+- Module path: `github.com/majiddarvishan/gitlab-mcp-minimal`. Go version: see `go.mod`.
+- Package layout: `internal/secret` (redacting string type), `internal/validate` (validators, allow-list),
+  `internal/config`, `internal/audit`, `internal/gitlab` (REST client). `cmd/` is added in T2.1.
+
+## Working rules
+
+1. Never push to `main`. Work on `claude/<topic>` branches and open a PR for the maintainer to review and merge.
+   (Only exception: the one-time bootstrap commit of an empty repository.)
+2. One task (or sub-task) per commit, with the task ID in the commit message (for example `feat: T1.2 ...`). A PR may
+   group the tasks of a phase, because creating a PR needs a manual click in the chat interface.
+3. Mark a task `[x]` in `TASKS.md` only when its acceptance criteria are met and verified (tests run locally or in CI).
+   Update the status in the same PR that changes it.
+4. Sandbox facts. The assistant's sandbox can install a Go toolchain from the Ubuntu archive
+   (`apt-get install golang-1.26-go`, then `/usr/lib/go-1.26/bin/go`) and run standard-library-only code, so tests
+   and `go vet` can run there. It cannot download Go modules (the module proxy is not reachable), so code with
+   third-party dependencies, such as the MCP SDK, usually cannot be compiled there and CI is the source of truth.
+   `govulncheck` also cannot run there. List what is unverified in the PR description.
+5. The GitHub connector used by the assistant has no `workflows` permission, so it cannot create or change files
+   under `.github/workflows/`. The maintainer commits workflow files.
+6. Tests first for validators and policy checks (table-driven and fuzz). Every security-relevant rule needs a
+   negative test. For security-critical code, run mutation checks (break the rule on purpose and confirm a test
+   fails).
+7. No secrets, ever. Never log tokens, request headers or file contents.
+8. Mark unverified facts (library APIs, GitLab endpoints and versions, tunnel-client flags) with `VERIFY` until they
+   are checked against the primary source.
+9. No scope creep. A new tool or capability needs an entry in `DECISIONS.md` first.

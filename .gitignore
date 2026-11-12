@@ -1,0 +1,22 @@
+# Build output
+/bin/
+/dist/
+/gitlab-mcp-minimal
+*.test
+*.out
+coverage.*
+
+# Local configuration and secrets must never be committed
+/config.json
+*.local.json
+.env
+.env.*
+*.pem
+*.key
+/secrets/
+*.token
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
