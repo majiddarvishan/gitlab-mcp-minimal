@@ -178,6 +178,27 @@ func (c *Client) endpoint(query url.Values, parts []string) (string, error) {
 }
 
 func (c *Client) do(ctx context.Context, method string, query url.Values, body []byte, parts []string) (*Response, error) {
+	resp, err := c.send(ctx, method, query, body, parts)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength > c.maxResp {
+		return nil, ErrResponseTooLarge
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResp+1))
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: read response: %w", err)
+	}
+	if int64(len(b)) > c.maxResp {
+		return nil, ErrResponseTooLarge
+	}
+	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: b}, nil
+}
+
+// send builds and sends a request and maps redirects and error statuses to
+// errors. On success the caller must close resp.Body.
+func (c *Client) send(ctx context.Context, method string, query url.Values, body []byte, parts []string) (*http.Response, error) {
 	target, err := c.endpoint(query, parts)
 	if err != nil {
 		return nil, err
@@ -201,26 +222,64 @@ func (c *Client) do(ctx context.Context, method string, query url.Values, body [
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
 	switch {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		resp.Body.Close()
 		return nil, ErrRedirect
 	case resp.StatusCode >= 400:
+		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		return nil, &APIError{Status: resp.StatusCode, Message: errorMessage(b)}
 	}
-	if resp.ContentLength > c.maxResp {
-		return nil, ErrResponseTooLarge
+	return resp, nil
+}
+
+// Tail is the end of a response body.
+type Tail struct {
+	Data      []byte // at most the requested number of final bytes
+	Total     int64  // bytes in the whole body
+	Truncated bool   // whether earlier bytes were dropped
+}
+
+// GetTail performs a GET like Get, but for large text bodies such as job logs:
+// it streams the body, keeps only the last keep bytes, and fails with
+// ErrResponseTooLarge when the body exceeds maxScan bytes.
+func (c *Client) GetTail(ctx context.Context, query url.Values, keep int, maxScan int64, parts ...string) (*Tail, error) {
+	if keep <= 0 || maxScan < int64(keep) {
+		return nil, errors.New("gitlab: invalid tail limits")
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResp+1))
+	resp, err := c.send(ctx, http.MethodGet, query, nil, parts)
 	if err != nil {
-		return nil, fmt.Errorf("gitlab: read response: %w", err)
+		return nil, err
 	}
-	if int64(len(b)) > c.maxResp {
-		return nil, ErrResponseTooLarge
+	defer resp.Body.Close()
+
+	var (
+		data  []byte
+		total int64
+		chunk = make([]byte, 32<<10)
+	)
+	for {
+		n, rerr := resp.Body.Read(chunk)
+		total += int64(n)
+		if total > maxScan {
+			return nil, ErrResponseTooLarge
+		}
+		data = append(data, chunk[:n]...)
+		if len(data) > 2*keep {
+			data = append(data[:0], data[len(data)-keep:]...)
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("gitlab: read response: %w", rerr)
+		}
 	}
-	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: b}, nil
+	if len(data) > keep {
+		data = append([]byte(nil), data[len(data)-keep:]...)
+	}
+	return &Tail{Data: data, Total: total, Truncated: total > int64(keep)}, nil
 }
 
 // errorMessage extracts a short, printable message from a GitLab error body.
