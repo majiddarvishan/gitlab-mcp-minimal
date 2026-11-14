@@ -40,6 +40,7 @@ type Limits struct {
 	MaxCommitBytes    int `json:"max_commit_bytes"`
 	MaxResponseBytes  int `json:"max_response_bytes"`
 	MaxTraceBytes     int `json:"max_trace_bytes"`
+	MaxDiffBytes      int `json:"max_diff_bytes"`
 	MaxTextBytes      int `json:"max_text_bytes"`
 }
 
@@ -50,6 +51,7 @@ var (
 		MaxCommitBytes:    1 << 20,
 		MaxResponseBytes:  4 << 20,
 		MaxTraceBytes:     64 << 10,
+		MaxDiffBytes:      128 << 10,
 		MaxTextBytes:      16 << 10,
 	}
 	// ceilingLimits are hard upper bounds a configuration cannot exceed.
@@ -59,6 +61,7 @@ var (
 		MaxCommitBytes:    4 << 20,
 		MaxResponseBytes:  16 << 20,
 		MaxTraceBytes:     1 << 20,
+		MaxDiffBytes:      1 << 20,
 		MaxTextBytes:      64 << 10,
 	}
 )
@@ -224,6 +227,7 @@ func (l *Limits) normalize() error {
 		{"max_commit_bytes", &l.MaxCommitBytes, defaultLimits.MaxCommitBytes, ceilingLimits.MaxCommitBytes},
 		{"max_response_bytes", &l.MaxResponseBytes, defaultLimits.MaxResponseBytes, ceilingLimits.MaxResponseBytes},
 		{"max_trace_bytes", &l.MaxTraceBytes, defaultLimits.MaxTraceBytes, ceilingLimits.MaxTraceBytes},
+		{"max_diff_bytes", &l.MaxDiffBytes, defaultLimits.MaxDiffBytes, ceilingLimits.MaxDiffBytes},
 		{"max_text_bytes", &l.MaxTextBytes, defaultLimits.MaxTextBytes, ceilingLimits.MaxTextBytes},
 	}
 	for _, f := range fields {

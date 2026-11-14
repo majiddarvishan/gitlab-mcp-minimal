@@ -34,22 +34,25 @@ ChatGPT -> OpenAI-hosted tunnel endpoint <- outbound HTTPS <- tunnel-client (ins
   written in English.
 - Go, standard library first. Every third-party dependency needs a written justification in its PR. Pin versions.
 - Module path: `github.com/majiddarvishan/gitlab-mcp-minimal`. Go version: see `go.mod`.
-- Package layout: `internal/secret` (redacting string type), `internal/validate` (validators, allow-list),
-  `internal/config`, `internal/audit`, `internal/gitlab` (REST client). `cmd/` is added in T2.1.
+- Package layout: `cmd/gitlab-mcp-minimal` (entry point), `internal/secret` (redacting string type),
+  `internal/validate` (validators, allow-list), `internal/config`, `internal/audit`, `internal/gitlab` (REST client),
+  `internal/server` (MCP tools on the official Go SDK).
 
 ## Working rules
 
 1. Never push to `main`. Work on `claude/<topic>` branches and open a PR for the maintainer to review and merge.
    (Only exception: the one-time bootstrap commit of an empty repository.)
-2. One task (or sub-task) per commit, with the task ID in the commit message (for example `feat: T1.2 ...`). A PR may
-   group the tasks of a phase, because creating a PR needs a manual click in the chat interface.
+2. Small commits, with the task ID in the commit message (for example `feat: T1.2 ...`). A PR may group the tasks
+   of a phase, because creating a PR needs a manual click in the chat interface. Keep each commit compiling.
 3. Mark a task `[x]` in `TASKS.md` only when its acceptance criteria are met and verified (tests run locally or in CI).
    Update the status in the same PR that changes it.
 4. Sandbox facts. The assistant's sandbox can install a Go toolchain from the Ubuntu archive
-   (`apt-get install golang-1.26-go`, then `/usr/lib/go-1.26/bin/go`) and run standard-library-only code, so tests
-   and `go vet` can run there. It cannot download Go modules (the module proxy is not reachable), so code with
-   third-party dependencies, such as the MCP SDK, usually cannot be compiled there and CI is the source of truth.
-   `govulncheck` also cannot run there. List what is unverified in the PR description.
+   (`apt-get install golang-1.26-go`, binary in `/usr/lib/go-1.26/bin`). It cannot reach the Go module proxy, but it
+   can reach github.com, so code that uses the MCP SDK is built there with a sandbox-only alternate go.mod
+   (`GOFLAGS=-modfile=/tmp/alt/go.mod`, `GOPROXY=direct`, `GOSUMDB=off`) that adds
+   `replace golang.org/x/<module> => github.com/golang/<module> <version>` lines. That alternate file is never
+   committed. `go.sum` must come from the maintainer running `go mod tidy` against the real proxy, so it is verified
+   by the checksum database. `govulncheck` cannot run in the sandbox.
 5. The GitHub connector used by the assistant has no `workflows` permission, so it cannot create or change files
    under `.github/workflows/`. The maintainer commits workflow files.
 6. Tests first for validators and policy checks (table-driven and fuzz). Every security-relevant rule needs a

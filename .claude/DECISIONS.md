@@ -26,11 +26,13 @@ configured numeric project ID, never a user-supplied path. This is defence in de
 token scope and branch protection (see "GitLab-side requirements"). In-server flags such as read-only modes are never
 treated as the security boundary.
 
-## D5. v1 tool set (proposed)
+## D5. Tool set (read tools accepted and implemented, write tools proposed)
 
-- Read: `list_projects`, `get_tree`, `get_file`, `get_mr_diff`, `list_pipelines`, `list_pipeline_jobs`,
-  `get_job_trace`.
-- Write: `create_branch`, `commit_files`, `create_merge_request`, `add_mr_note`.
+- Read, implemented in Phase 2: `list_projects`, `get_tree`, `get_file`, `get_mr_diff`, `list_pipelines`,
+  `list_pipeline_jobs`, `get_job_trace`.
+- Write, planned for Phase 3: `create_branch`, `commit_files`, `create_merge_request`, `add_mr_note`.
+- Candidates that need their own decision before being added: `get_merge_request` (title, state, branches) and
+  `list_mr_notes`, which an agent needs to react to review comments.
 - Explicitly absent: merging MRs, deleting branches or projects, CI variables, raw API calls, GraphQL, uploads, and
   anything that touches the local filesystem.
 
@@ -42,11 +44,11 @@ treated as the security boundary.
 - Merge requests are always created as drafts. The target must be the project's default branch unless configured
   otherwise.
 
-## D7. Limits (proposed)
+## D7. Limits (accepted)
 
-Maximum files per commit, bytes per file, total bytes per commit, tail-truncated job traces, response size caps and
-request timeouts. Values live in configuration with conservative defaults and hard ceilings that a configuration
-cannot exceed. Implemented in `internal/config`.
+Maximum files per commit, bytes per file, total bytes per commit, response size, job log size, merge request diff
+size and free-text size, plus request timeouts. Values live in configuration with conservative defaults and hard
+ceilings that a configuration cannot exceed. Implemented in `internal/config`.
 
 ## D8. Configuration (accepted)
 
@@ -62,11 +64,19 @@ Structured JSON audit log, one line per tool call (tool, project ID, ref, outcom
 contents), written to stderr only. The logger refuses to be constructed on stdout, scrubs known secrets and bounds
 field lengths.
 
-## D10. MCP SDK (open)
+## D10. MCP SDK (accepted): the official Go SDK, pinned
 
-The official Go SDK, `github.com/modelcontextprotocol/go-sdk`, is the default candidate. VERIFY the current version,
-API and licence before adopting it. Fall back to a minimal JSON-RPC stdio handler only if the SDK proves unsuitable.
-Decide in T2.1.
+The server uses `github.com/modelcontextprotocol/go-sdk` (v1.8.0 at the time of writing; MIT/Apache-2.0 licensed).
+A hand-written JSON-RPC handler was considered and rejected: the protocol changed substantially in version
+2026-07-28 (stateless requests, `server/discover` in place of the `initialize` handshake, per-request metadata), and
+the SDK negotiates both the old and the new model. Maintaining that ourselves would be a continuing risk with no
+security benefit.
+
+Costs, accepted knowingly: more code than we would write ourselves (the SDK also contains HTTP and SSE transports,
+which this project never starts) and a handful of transitive modules (`jsonschema-go`, `uritemplate`,
+`segmentio/encoding`, `golang.org/x/oauth2`, `x/time`, `x/sync`, `x/sys`). Mitigations: version pinned in `go.mod`,
+`go.sum` verified by the checksum database, `govulncheck` in CI, Dependabot, and no transport other than stdio is
+ever constructed.
 
 ## D11. Packaging (proposed)
 
@@ -96,8 +106,22 @@ are not covered, so the GitLab-side requirements below still apply.
 - TLS 1.2 or newer, certificate verification always on, optional private CA bundle through `ca_file`; there is no
   option to skip verification. `http://` needs an explicit `allow_insecure_http`.
 - Every response is size-capped (also when no Content-Length is sent) and error bodies are reduced to a short,
-  sanitised message.
+  sanitised message. Job logs are streamed and only their last bytes are kept.
 - Request URLs are built only from escaped single path segments; `.`, `..` and empty segments are refused.
+
+## D16. Tool output policy (accepted)
+
+- Every tool is annotated with MCP hints: read tools are `readOnlyHint: true` and `openWorldHint: false`, so clients
+  such as ChatGPT treat them as safe, and (later) write tools will not carry `readOnlyHint` so clients ask for
+  confirmation.
+- Outputs never contain links or the address of the GitLab instance, and only the fields a tool needs are returned.
+- Errors shown to the model are short and come from a fixed set (`internal/server/errors.go`); anything unexpected is
+  reported as "internal error" and the details go to the audit log only.
+- Binary files are never returned; text files above the limit are refused rather than truncated; diffs and job logs
+  are cut to their limits with a `truncated` flag; job logs have terminal escape codes, section markers and control
+  characters removed.
+- The server instructions tell the model that all returned content is untrusted data and must not be obeyed.
+- Malformed input is rejected before any request is made to GitLab, and each rejection is audited as `denied`.
 
 ## Threat model (summary)
 
@@ -105,12 +129,13 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 
 | Threat | Mitigation |
 |---|---|
-| Prompt injection through issue or MR text, file content or job logs steering the model into harmful tool calls | Narrow tool set; writes only to prefixed branches and draft MRs; no merge tool; deny-listed paths; ChatGPT asks for confirmation before write actions; a human reviews every MR |
+| Prompt injection through issue or MR text, file content or job logs steering the model into harmful tool calls | Narrow tool set; writes only to prefixed branches and draft MRs; no merge tool; deny-listed paths; ChatGPT asks for confirmation before write actions; a human reviews every MR; server instructions mark content as untrusted |
 | Malicious or buggy tool arguments (path traversal, odd refs, IDs) | Strict validators with fuzz and negative tests; URL path segments always escaped; numeric IDs parsed, never concatenated |
 | Redirecting the API base URL to steal the token (SSRF) | Fixed base URL, no per-request URL, no redirects, no proxy |
 | Local file read or exfiltration through the server | No tools touching local files; non-root, read-only filesystem, no other secrets on the host |
 | Pipeline changes on agent branches that exfiltrate CI secrets | Deny-list for CI paths (D14); GitLab side: protected variables, protected runners where needed, CODEOWNERS on the CI configuration |
 | Token leakage through logs or errors | Redacting secret type; audit logger scrubs secrets; never log headers or bodies; token only from a secret file or environment |
+| Sensitive data in job logs or files reaching the model provider | Accepted residual risk: everything a tool returns is sent to the model provider. Keep secrets masked in CI and out of repositories; restrict the allow-list |
 | Supply chain (dependencies, tunnel-client binary, base image) | Few dependencies, pinned versions, `govulncheck`, checksum-verified binaries, CI actions pinned by SHA |
 | Unauthenticated network access to the server | No listener at all (stdio only) |
 
@@ -129,8 +154,8 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 | Tool | Endpoint |
 |---|---|
 | `get_tree` | `GET /projects/:id/repository/tree` |
-| `get_file` | `GET /projects/:id/repository/files/:file_path?ref=` |
-| `get_mr_diff` | `GET /projects/:id/merge_requests/:iid/diffs` (older instances: `/changes`) |
+| `get_file` | `GET /projects/:id/repository/files/:file_path?ref=` (the default branch comes from `GET /projects/:id`) |
+| `get_mr_diff` | `GET /projects/:id/merge_requests/:iid/diffs` (GitLab 15.7 or newer) |
 | `list_pipelines` | `GET /projects/:id/pipelines` |
 | `list_pipeline_jobs` | `GET /projects/:id/pipelines/:pipeline_id/jobs` |
 | `get_job_trace` | `GET /projects/:id/jobs/:job_id/trace` |
@@ -138,3 +163,6 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 | `commit_files` | `POST /projects/:id/repository/commits` (`actions[]`) |
 | `create_merge_request` | `POST /projects/:id/merge_requests` (draft via title prefix; VERIFY the `draft` parameter) |
 | `add_mr_note` | `POST /projects/:id/merge_requests/:iid/notes` |
+
+The read endpoints are exercised only against a fake GitLab in tests, so their field names are VERIFY items until the
+end-to-end test (T4.5) runs against a real instance.
