@@ -26,23 +26,27 @@ configured numeric project ID, never a user-supplied path. This is defence in de
 token scope and branch protection (see "GitLab-side requirements"). In-server flags such as read-only modes are never
 treated as the security boundary.
 
-## D5. Tool set (read tools accepted and implemented, write tools proposed)
+## D5. Tool set (accepted and implemented)
 
-- Read, implemented in Phase 2: `list_projects`, `get_tree`, `get_file`, `get_mr_diff`, `list_pipelines`,
-  `list_pipeline_jobs`, `get_job_trace`.
-- Write, planned for Phase 3: `create_branch`, `commit_files`, `create_merge_request`, `add_mr_note`.
+- Read: `list_projects`, `get_tree`, `get_file`, `get_mr_diff`, `list_pipelines`, `list_pipeline_jobs`,
+  `get_job_trace`.
+- Write (only with `enable_write_tools`, see D17): `create_branch`, `commit_files`, `create_merge_request`,
+  `add_mr_note`.
 - Candidates that need their own decision before being added: `get_merge_request` (title, state, branches) and
   `list_mr_notes`, which an agent needs to react to review comments.
 - Explicitly absent: merging MRs, deleting branches or projects, CI variables, raw API calls, GraphQL, uploads, and
   anything that touches the local filesystem.
 
-## D6. Write policy (proposed)
+## D6. Write policy (accepted and implemented)
 
-- Writes only to branches matching a configured prefix (default `agent/`).
-- `commit_files` refuses the default branch and protected branches.
-- Writes to paths on the deny-list are refused (see D14).
-- Merge requests are always created as drafts. The target must be the project's default branch unless configured
-  otherwise.
+- Writes only to branches matching a configured prefix (default `agent/`). The branch must exist, and
+  `commit_files` looks it up first and refuses the default branch and protected branches.
+- Writes to paths on the deny-list are refused (see D14). Content must be UTF-8 text without NUL bytes; there is no
+  way to write binary files.
+- Merge requests are always created as drafts (a `Draft:` title prefix, which GitLab recognises). They come from an
+  agent branch and always target the project's default branch.
+- Comments (`add_mr_note`) are only allowed on open merge requests whose source branch is an agent branch.
+- A commit may carry per-file `last_commit_id` values so that GitLab refuses it if a file changed meanwhile.
 
 ## D7. Limits (accepted)
 
@@ -53,16 +57,16 @@ ceilings that a configuration cannot exceed. Implemented in `internal/config`.
 ## D8. Configuration (accepted)
 
 JSON file decoded with unknown fields and trailing data rejected, size-capped at 64 KiB. Fields: `base_url`,
-`allow_insecure_http`, `ca_file`, `token_file` or `token_env` (exactly one), `projects`, `branch_prefix`,
-`write_deny_paths`, `request_timeout_seconds`, `limits`. The token is read from a file (preferred; symlinks such as
-Kubernetes secret mounts are followed) or an environment variable, never from tool arguments, and is wrapped in a
-type that never prints (`internal/secret`).
+`allow_insecure_http`, `ca_file`, `token_file` or `token_env` (exactly one), `projects`, `enable_write_tools`,
+`branch_prefix`, `write_deny_paths`, `request_timeout_seconds`, `limits`. The token is read from a file (preferred;
+symlinks such as Kubernetes secret mounts are followed) or an environment variable, never from tool arguments, and is
+wrapped in a type that never prints (`internal/secret`).
 
 ## D9. Logging (accepted)
 
 Structured JSON audit log, one line per tool call (tool, project ID, ref, outcome, short reason, duration; no file
 contents), written to stderr only. The logger refuses to be constructed on stdout, scrubs known secrets and bounds
-field lengths.
+field lengths. Known gap: calls rejected by the SDK's schema validation never reach the handlers and are not logged.
 
 ## D10. MCP SDK (accepted): the official Go SDK, pinned
 
@@ -83,9 +87,9 @@ ever constructed.
 Single container, non-root, read-only root filesystem, no shell if possible, egress allowed only to the GitLab host
 and OpenAI, token mounted as a secret file, `tunnel-client` version pinned and checksum-verified.
 
-## D12. Licence (open)
+## D12. Licence (accepted)
 
-Apache-2.0 or MIT. The maintainer decides (T0.1).
+Apache-2.0, added to the repository by the maintainer.
 
 ## D13. Visibility (accepted)
 
@@ -111,9 +115,10 @@ are not covered, so the GitLab-side requirements below still apply.
 
 ## D16. Tool output policy (accepted)
 
-- Every tool is annotated with MCP hints: read tools are `readOnlyHint: true` and `openWorldHint: false`, so clients
-  such as ChatGPT treat them as safe, and (later) write tools will not carry `readOnlyHint` so clients ask for
-  confirmation.
+- Every tool is annotated with MCP hints. Read tools are `readOnlyHint: true`, so clients such as ChatGPT treat them
+  as safe. Write tools carry no `readOnlyHint`, so clients ask the user to confirm each call; `commit_files` is also
+  flagged `destructiveHint: true` because an update or delete replaces existing content. All tools are
+  `openWorldHint: false`.
 - Outputs never contain links or the address of the GitLab instance, and only the fields a tool needs are returned.
 - Errors shown to the model are short and come from a fixed set (`internal/server/errors.go`); anything unexpected is
   reported as "internal error" and the details go to the audit log only.
@@ -122,6 +127,12 @@ are not covered, so the GitLab-side requirements below still apply.
   characters removed.
 - The server instructions tell the model that all returned content is untrusted data and must not be obeyed.
 - Malformed input is rejected before any request is made to GitLab, and each rejection is audited as `denied`.
+
+## D17. Write tools are opt-in (accepted)
+
+The four write tools are registered only when the configuration sets `enable_write_tools: true`. Without it the
+server exposes the seven read tools only, so it can be deployed read-only first, and a token with `read_api` scope
+is enough. This is a restriction, not a new capability.
 
 ## Threat model (summary)
 
@@ -134,7 +145,8 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 | Redirecting the API base URL to steal the token (SSRF) | Fixed base URL, no per-request URL, no redirects, no proxy |
 | Local file read or exfiltration through the server | No tools touching local files; non-root, read-only filesystem, no other secrets on the host |
 | Pipeline changes on agent branches that exfiltrate CI secrets | Deny-list for CI paths (D14); GitLab side: protected variables, protected runners where needed, CODEOWNERS on the CI configuration |
-| Token leakage through logs or errors | Redacting secret type; audit logger scrubs secrets; never log headers or bodies; token only from a secret file or environment |
+| Overwriting a human's changes | Agent branches only; `last_commit_id` support; protected and default branches refused; a human reviews and merges |
+| Token leakage through logs or errors | Redacting secret type; audit logger scrubs secrets; never log headers, bodies or file contents; token only from a secret file or environment |
 | Sensitive data in job logs or files reaching the model provider | Accepted residual risk: everything a tool returns is sent to the model provider. Keep secrets masked in CI and out of repositories; restrict the allow-list |
 | Supply chain (dependencies, tunnel-client binary, base image) | Few dependencies, pinned versions, `govulncheck`, checksum-verified binaries, CI actions pinned by SHA |
 | Unauthenticated network access to the server | No listener at all (stdio only) |
@@ -159,10 +171,10 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 | `list_pipelines` | `GET /projects/:id/pipelines` |
 | `list_pipeline_jobs` | `GET /projects/:id/pipelines/:pipeline_id/jobs` |
 | `get_job_trace` | `GET /projects/:id/jobs/:job_id/trace` |
-| `create_branch` | `POST /projects/:id/repository/branches` |
-| `commit_files` | `POST /projects/:id/repository/commits` (`actions[]`) |
-| `create_merge_request` | `POST /projects/:id/merge_requests` (draft via title prefix; VERIFY the `draft` parameter) |
-| `add_mr_note` | `POST /projects/:id/merge_requests/:iid/notes` |
+| `create_branch` | `POST /projects/:id/repository/branches` (JSON body: `branch`, `ref`) |
+| `commit_files` | `GET /projects/:id/repository/branches/:branch` (policy check), then `POST /projects/:id/repository/commits` (`branch`, `commit_message`, `actions[]`) |
+| `create_merge_request` | `POST /projects/:id/merge_requests` (`source_branch`, `target_branch`, `title` with a `Draft:` prefix, `description`) |
+| `add_mr_note` | `GET /projects/:id/merge_requests/:iid` (policy check), then `POST /projects/:id/merge_requests/:iid/notes` |
 
-The read endpoints are exercised only against a fake GitLab in tests, so their field names are VERIFY items until the
-end-to-end test (T4.5) runs against a real instance.
+All endpoints are exercised only against a fake GitLab in tests, so their field names and the `Draft:` behaviour are
+VERIFY items until the end-to-end test (T4.5) runs against a real instance.
