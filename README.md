@@ -5,9 +5,10 @@ read repositories and propose changes on a self-hosted GitLab instance, through 
 nothing else.
 
 > **Status: work in progress (pre-release).** The server runs with seven read-only tools and, when you opt in with
-> `enable_write_tools`, four write tools. It has only been tested against a fake GitLab so far; the end-to-end test on
-> a real instance (Phase 4) and the security review (Phase 5) are still to do. Do not point it at a production GitLab
-> yet.
+> `enable_write_tools`, four write tools. Packaging and deployment guides exist (Docker image on top of OpenAI's
+> `tunnel-client-runtime`), but it has only been tested against a fake GitLab so far; the end-to-end test on a real
+> instance ([`docs/e2e-test.md`](docs/e2e-test.md)) and the security review are still to do. Do not point it at a
+> production GitLab yet.
 
 ## Why another GitLab MCP server?
 
@@ -69,6 +70,14 @@ GITLAB_TOKEN=... ./gitlab-mcp-minimal -config config.json    # or set GITLAB_MCP
 The process speaks MCP on stdin/stdout, so it is normally started by an MCP client or by `tunnel-client`, not by hand.
 `-version` prints the version.
 
+## Deploy
+
+The supported way is the container image built from the [`Dockerfile`](Dockerfile): OpenAI's `tunnel-client-runtime`
+(pinned by version and digest, provenance verified) plus this server. Step by step in
+[`docs/deployment.md`](docs/deployment.md); an example compose file is in [`deploy/`](deploy/). Then connect ChatGPT
+([`docs/chatgpt-connector.md`](docs/chatgpt-connector.md)) and harden GitLab first
+([`docs/gitlab-hardening.md`](docs/gitlab-hardening.md)).
+
 ## Configuration
 
 See [`config.example.json`](config.example.json). The configuration never contains the token itself, only where to
@@ -89,11 +98,12 @@ Unknown fields are rejected.
 
 ## GitLab-side setup (required)
 
-The in-server checks are defence in depth. The real boundary is GitLab itself: use a dedicated bot user or project
-access token with the Developer role (`read_api` scope is enough while write tools are off, `api` is needed to
-write), short expiry, protect the default branch against direct pushes, put CI configuration under CODEOWNERS, and
-keep CI secrets as protected variables. Details in [`.claude/DECISIONS.md`](.claude/DECISIONS.md). The merge request
-diff tool uses the `/diffs` endpoint, which needs GitLab 15.7 or newer.
+The in-server checks are defence in depth. The real boundary is GitLab itself: use a project access token with the
+Developer role (`read_api` scope is enough while write tools are off, `api` is needed to write) and a short expiry,
+protect the default branch against direct pushes and merges by the bot, require human approval and CODEOWNERS review,
+and keep CI secrets protected and masked. Agent-written code runs in CI before anyone reviews it, so read the full
+checklist in [`docs/gitlab-hardening.md`](docs/gitlab-hardening.md). The merge request diff tool uses the `/diffs`
+endpoint, which needs GitLab 15.7 or newer.
 
 ## Development
 
