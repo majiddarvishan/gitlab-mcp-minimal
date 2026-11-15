@@ -5,6 +5,10 @@ Update a task's status in the same PR that changes it.
 
 Status: **Phases 0 to 3 implemented. Next: Phase 4 (packaging and end-to-end test against a real GitLab).**
 
+Target instance: self-managed GitLab 18.8 (Enterprise Edition). Both version-dependent features are available there:
+the merge request `/diffs` endpoint (since 15.7) and `Draft:` title prefixes, which GitLab's documentation names as
+the way to create a draft merge request (the create API has no draft parameter).
+
 ## Phase 0: Repository setup
 
 - [x] **T0.1** README, LICENSE (Apache-2.0, added by the maintainer), `.gitignore`, `go.mod`, `SECURITY.md`.
@@ -59,10 +63,10 @@ the handlers and therefore is not written to the audit log. It has no effect on 
 - [ ] **T4.3** ChatGPT connector setup guide (Developer mode, Tunnel connection, authentication choice on the
   connector, who can use it).
 - [ ] **T4.4** GitLab hardening checklist document derived from DECISIONS.md.
-- [ ] **T4.5** end-to-end test on a disposable GitLab project: the happy path plus prompt-injection scenarios
-  (hostile issue text, hostile file content, hostile CI log). Confirm no write lands outside the prefix, that CI
-  secrets are not exposed on agent branches, and that the field names of the GitLab responses (all tools) and the
-  `Draft:` title behaviour match a real instance.
+- [ ] **T4.5** end-to-end test on a disposable GitLab project (GitLab 18.8): the happy path plus prompt-injection
+  scenarios (hostile issue text, hostile file content, hostile CI log). Confirm no write lands outside the prefix, that
+  CI secrets are not exposed on agent branches, and that the field names of the GitLab responses (all tools) match a
+  real instance.
 
 ## Phase 5: Hardening and release
 
@@ -74,7 +78,6 @@ the handlers and therefore is not written to the audit log. It has no effect on 
 
 ## Open questions for the maintainer
 
-- GitLab version in use: the diff tool needs 15.7 or newer; `Draft:` title prefixes need 14.0 or newer.
 - Whether to add T2.4 (read merge request details and review comments) before the end-to-end test.
 - Whether the default limits (20 files per commit, 256 KiB per file, 1 MiB per commit, 128 KiB of diff, 64 KiB of job
   log) suit your repositories.
