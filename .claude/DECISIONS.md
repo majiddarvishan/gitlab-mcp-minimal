@@ -82,10 +82,11 @@ which this project never starts) and a handful of transitive modules (`jsonschem
 `go.sum` verified by the checksum database, `govulncheck` in CI, Dependabot, and no transport other than stdio is
 ever constructed.
 
-## D11. Packaging (proposed)
+## D11. Packaging (accepted, see D18)
 
-Single container, non-root, read-only root filesystem, no shell if possible, egress allowed only to the GitLab host
-and OpenAI, token mounted as a secret file, `tunnel-client` version pinned and checksum-verified.
+One container image, non-root (uid 65532), read-only root filesystem and no capabilities in the example deployment, no
+shell of our own, the OpenAI runtime key and the GitLab token mounted as secret files, the `tunnel-client-runtime`
+base image pinned by exact version and digest, and egress limited to the OpenAI tunnel host and the GitLab host.
 
 ## D12. Licence (accepted)
 
@@ -134,6 +135,25 @@ The four write tools are registered only when the configuration sets `enable_wri
 server exposes the seven read tools only, so it can be deployed read-only first, and a token with `read_api` scope
 is enough. This is a restriction, not a new capability.
 
+## D18. Deployment shape (accepted)
+
+Two programs in one image: OpenAI's `tunnel-client-runtime` is the entry point and starts this server as a supervised
+stdio child (`MCP_COMMAND`). Reasons and consequences, from the upstream documentation:
+
+- The runtime flavour is the narrow one (commands `run`, help, version; no admin UI, plugins or local proxy). It is
+  published as `ghcr.io/openai/tunnel-client-runtime` with an SBOM and signed provenance, so the base image is one
+  pinned, verifiable artifact instead of a downloaded binary. The Dockerfile has no default for it, so an unpinned
+  build fails.
+- Both secrets are files, not environment variables: the OpenAI runtime key through `--control-plane.api-key=file:`
+  and the GitLab token through `token_file`. The stdio child inherits the runtime's environment, so this keeps both
+  secrets out of it.
+- Exactly one instance per tunnel id (upstream limit for stdio servers, including during restarts and rollouts).
+- Egress: `api.openai.com:443` and the GitLab host only; no inbound ports.
+
+Alternatives considered and rejected: embedding the tunnel client in this process through its Go SDK (puts OpenAI's
+network client and the GitLab token in one process and couples release cadences), an HTTP MCP endpoint (adds a
+listener, D2), and release ZIP plus systemd (valid, but the image gives one pinned, attested artifact).
+
 ## Threat model (summary)
 
 Assets: the GitLab token, the source code of allow-listed projects, and the integrity of branches and CI.
@@ -145,21 +165,22 @@ Assets: the GitLab token, the source code of allow-listed projects, and the inte
 | Redirecting the API base URL to steal the token (SSRF) | Fixed base URL, no per-request URL, no redirects, no proxy |
 | Local file read or exfiltration through the server | No tools touching local files; non-root, read-only filesystem, no other secrets on the host |
 | Pipeline changes on agent branches that exfiltrate CI secrets | Deny-list for CI paths (D14); GitLab side: protected variables, protected runners where needed, CODEOWNERS on the CI configuration |
+| Agent-written code (tests, scripts, build files) runs in CI on its branch before anyone reviews it | GitLab side only (hardening checklist, section 6): protected and masked variables, deploy jobs on protected refs only, credential-free runners for unprotected branches |
 | Overwriting a human's changes | Agent branches only; `last_commit_id` support; protected and default branches refused; a human reviews and merges |
-| Token leakage through logs or errors | Redacting secret type; audit logger scrubs secrets; never log headers, bodies or file contents; token only from a secret file or environment |
+| Token leakage through logs or errors | Redacting secret type; audit logger scrubs secrets; never log headers, bodies or file contents; secrets only from files; neither secret in the child's environment |
 | Sensitive data in job logs or files reaching the model provider | Accepted residual risk: everything a tool returns is sent to the model provider. Keep secrets masked in CI and out of repositories; restrict the allow-list |
-| Supply chain (dependencies, tunnel-client binary, base image) | Few dependencies, pinned versions, `govulncheck`, checksum-verified binaries, CI actions pinned by SHA |
-| Unauthenticated network access to the server | No listener at all (stdio only) |
+| Supply chain (dependencies, tunnel-client image, base images) | Few dependencies, pinned versions, `govulncheck`, CI actions pinned by SHA, base image pinned by digest and its provenance verified |
+| Unauthenticated network access to the server | No listener at all (stdio only); no inbound ports on the container |
 
 ## GitLab-side requirements (not enforced by this server)
 
-- Use a dedicated bot user or a project access token: Developer role, `api` scope (writes need it; `read_api` is
-  read-only), short expiry, rotated regularly.
-- Default branch protected: no direct pushes, merges done by a human.
-- CODEOWNERS (or equivalent approval rules) covering the CI configuration file.
-- CI secrets stored as protected variables so they are not exposed to unprotected agent branches. VERIFY the
-  semantics for the GitLab version in use.
-- Monitor GitLab audit events for the token's activity.
+The full checklist is `docs/gitlab-hardening.md`. In short:
+
+- A project access token per project: Developer role, `read_api` scope (read-only) or `api` (write), short expiry.
+- Default branch protected: no direct pushes, merges by Maintainers only; agent branches not protected.
+- Approval and CODEOWNERS rules so a person reviews every change, including CI configuration and scripts.
+- CI secrets protected and masked; deploy jobs only on protected refs; credential-free runners for other branches.
+- Monitor GitLab audit events for the bot's activity.
 
 ## GitLab REST mapping (VERIFY against the target instance's API documentation and version)
 

@@ -3,7 +3,8 @@
 Marking: `[x]` means done and verified, `[ ]` means open. A parent task is checked only when all its sub-items are.
 Update a task's status in the same PR that changes it.
 
-Status: **Phases 0 to 3 implemented. Next: Phase 4 (packaging and end-to-end test against a real GitLab).**
+Status: **Phases 0 to 3 implemented; Phase 4 documents and packaging written. Next: build the image and run the
+end-to-end test (T4.1 sub-item, T4.5), which needs the maintainer.**
 
 Target instance: self-managed GitLab 18.8 (Enterprise Edition). Both version-dependent features are available there:
 the merge request `/diffs` endpoint (since 15.7) and `Draft:` title prefixes, which GitLab's documentation names as
@@ -39,34 +40,34 @@ mutation checks on the write policy (every deliberate breakage made a test fail)
 the configuration sets `enable_write_tools` (D17).
 
 - [x] **T3.1** `create_branch`.
-  The name must match the configured prefix; the start ref is validated; refused input never reaches GitLab.
 - [x] **T3.2** `commit_files` (create, update, delete actions).
-  Prefix, deny-list and size limits enforced; text only (UTF-8, no NUL); duplicate paths refused; optional
-  `last_commit_id` per file to detect concurrent changes; the branch is looked up first and a default or protected
-  branch is refused; one atomic commit.
 - [x] **T3.3** `create_merge_request` and `add_mr_note`.
-  Merge requests are always drafts (title prefix), come from an agent branch and target the default branch; notes are
-  only allowed on open merge requests from agent branches.
 - [x] **T3.4** negative test suite.
-  Writes to the default branch, protected branches, foreign branches, deny-listed paths, traversal, oversized commits,
-  binary content, unknown projects and invalid titles are all rejected, and tests assert that no request reached
-  GitLab.
 
 Known gap: a call that the SDK rejects during schema validation (for example a missing required field) never reaches
 the handlers and therefore is not written to the audit log. It has no effect on GitLab.
 
 ## Phase 4: Packaging and integration
 
-- [ ] **T4.1** Dockerfile with both binaries; non-root, read-only root filesystem; `tunnel-client` pinned to a
-  version and checksum-verified.
-- [ ] **T4.2** `tunnel-client` profile and setup documentation. VERIFY every flag against OpenAI's guide.
-- [ ] **T4.3** ChatGPT connector setup guide (Developer mode, Tunnel connection, authentication choice on the
-  connector, who can use it).
-- [ ] **T4.4** GitLab hardening checklist document derived from DECISIONS.md.
-- [ ] **T4.5** end-to-end test on a disposable GitLab project (GitLab 18.8): the happy path plus prompt-injection
-  scenarios (hostile issue text, hostile file content, hostile CI log). Confirm no write lands outside the prefix, that
-  CI secrets are not exposed on agent branches, and that the field names of the GitLab responses (all tools) match a
-  real instance.
+Written from the upstream `tunnel-client` documentation and source (D18). I have no Docker or OpenAI access, so nothing
+in this phase has been executed end to end; the unverified points are marked VERIFY in the documents.
+
+- [ ] **T4.1** Dockerfile with both programs; non-root, read-only root filesystem in the example; `tunnel-client-runtime`
+  base image pinned by version and digest.
+  - [x] `Dockerfile`, `.dockerignore`, `deploy/docker-compose.example.yml` written; `hadolint` clean; the compose
+    file parses; Dependabot watches Docker base images
+  - [ ] (maintainer) choose a `tunnel-client-runtime` release, verify its provenance, build the image and start it
+- [x] **T4.2** `docs/deployment.md`: tunnel and key setup, image verification, build, configuration, secrets as files,
+  one instance per tunnel id, the initialization-guard caveat, alternatives. Flags and behaviour were read from the
+  upstream documentation and source.
+- [x] **T4.3** `docs/chatgpt-connector.md`: connector creation with a Tunnel connection, what "No authentication"
+  means, confirmations, first prompts, troubleshooting. ChatGPT screen labels are VERIFY items.
+- [x] **T4.4** `docs/gitlab-hardening.md`: token, branch protection, approvals, CODEOWNERS, CI/CD secrets and the
+  risk of agent-written code running in CI before review.
+- [ ] **T4.5** run `docs/e2e-test.md` on a disposable GitLab 18.8 project and report the differences (maintainer
+  executes, results come back to the assistant). Also confirms the VERIFY items: GitLab field names for all tools,
+  `Draft:` behaviour, whether child stderr reaches the container log, `readyz` behaviour, whether the
+  initialization flag is needed.
 
 ## Phase 5: Hardening and release
 
@@ -83,3 +84,4 @@ the handlers and therefore is not written to the audit log. It has no effect on 
   log) suit your repositories.
 - Whether `.gitmodules` should join the default write deny-list (a changed submodule URL is a supply-chain risk,
   although a human reviews the merge request).
+- Which host will run the container, and whether it is Docker, systemd or Kubernetes (the guide assumes Docker).
