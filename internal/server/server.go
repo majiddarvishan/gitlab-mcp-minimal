@@ -51,6 +51,9 @@ func New(d Deps) (*mcp.Server, error) {
 	s.addRepositoryTools(srv)
 	s.addCITools(srv)
 	s.addMergeRequestTools(srv)
+	if d.Config.EnableWriteTools {
+		s.addWriteTools(srv)
+	}
 	return srv, nil
 }
 

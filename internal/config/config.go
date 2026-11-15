@@ -83,6 +83,10 @@ type Config struct {
 	// Projects is the allow-list. Every tool call is checked against it.
 	Projects []validate.Project `json:"projects"`
 
+	// EnableWriteTools registers the tools that change GitLab (branches, commits,
+	// merge requests, notes). Off by default: without it the server is read-only.
+	EnableWriteTools bool `json:"enable_write_tools"`
+
 	// BranchPrefix restricts the branches the agent may write to.
 	BranchPrefix string `json:"branch_prefix"`
 	// WriteDenyPaths overrides validate.DefaultDenyPaths when present
