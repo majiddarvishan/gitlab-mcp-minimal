@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+docs
+deploy
+bin
+dist
+*.md
+!LICENSE
+config.json
+*.local.json
+.env
+.env.*
+*.pem
+*.key
+secrets

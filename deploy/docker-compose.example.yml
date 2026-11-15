@@ -1,0 +1,44 @@
+# Example only: copy it, replace the placeholders and adapt. See docs/deployment.md.
+#
+# Build the image first (it needs a pinned tunnel-client-runtime image, see the Dockerfile):
+#   docker build --build-arg TUNNEL_RUNTIME_IMAGE=ghcr.io/openai/tunnel-client-runtime:<version>@sha256:<digest> \
+#     -t gitlab-mcp-minimal:local .
+#
+# Run exactly ONE instance per tunnel id: stdio servers cannot be shared between instances.
+services:
+  gitlab-mcp:
+    image: gitlab-mcp-minimal:local
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: tunnel_REPLACE_WITH_YOUR_TUNNEL_ID
+      HEALTH_LISTEN_ADDR: 127.0.0.1:8080
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+    # The OpenAI runtime key is read from a file, so it is not in the environment that the
+    # MCP child inherits.
+    command:
+      - --control-plane.api-key=file:/run/secrets/openai_runtime_key
+    volumes:
+      - ./config.json:/etc/gitlab-mcp/config.json:ro
+    secrets:
+      - openai_runtime_key
+      - gitlab_token
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# The host files must be readable by uid 65532 (chown 65532:65532, chmod 0400).
+secrets:
+  openai_runtime_key:
+    file: ./secrets/openai_runtime_key
+  gitlab_token:
+    file: ./secrets/gitlab_token
